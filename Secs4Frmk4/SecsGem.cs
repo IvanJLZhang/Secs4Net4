@@ -18,10 +18,12 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AsyncTCP;
+using Secs4Frmk4.Properties;
 
 namespace Secs4Frmk4
 {
@@ -191,7 +193,28 @@ namespace Secs4Frmk4
         #region receive
         private void DatagramReceived(object sender, TcpDatagramReceivedEventArgs<byte[]> e)
         {
+            try
+            {
+                _timer8.Change(Timeout.Infinite, Timeout.Infinite);
+                var receivedCount = e.ReceivedCount;
+                if (receivedCount == 0)
+                {
+                    Logger.Error("Received 0 byte.");
+                    CommunicationStateChanging(ConnectionState.Retry);
+                    return;
+                }
 
+                if (_secsDecoder.Decode(receivedCount))
+                {
+
+                }
+
+            }
+            catch (Exception)
+            {
+
+                throw;
+            }
         }
         #endregion
 
@@ -253,9 +276,48 @@ namespace Secs4Frmk4
         #endregion
 
         #region send message
-        private void SendControlMessage(MessageType linkTestRequest, int newSystemId)
+        private void SendControlMessage(MessageType messageType, int systemByte)
         {
-            throw new NotImplementedException();
+            var token = new TaskCompletionSourceToken(ControlMessage, systemByte, messageType);
+            if ((byte)messageType % 2 == 1 && messageType != MessageType.SeperateRequest)
+            {
+                _replyExpectedMsgs[systemByte] = token;
+            }
+
+            var bufferList = new List<ArraySegment<byte>>(2)
+            {
+                ControlMessageLengthBytes,
+                new ArraySegment<byte>(new MessageHeader{
+                    DeviceId = 0xFFFF,
+                    MessageType = messageType,
+                    SystemBytes = systemByte
+                }.EncodeTo(new byte[10]))
+            };
+
+            if (IsActive)
+            {
+                tcpClient.Send(bufferList);
+                SendDataMessageCompleteHandler(tcpClient, token);
+            }
+            else
+            {
+                tcpServer.SyncSendToAll(bufferList);
+                SendDataMessageCompleteHandler(tcpServer, token);
+            }
+        }
+
+        private void SendControlMessageHandler(object sender, TaskCompletionSourceToken e)
+        {
+            Logger.Info("Sent Control Message: " + e.MsgType);
+            if (_replyExpectedMsgs.ContainsKey(e.Id))
+            {
+                if (!e.Task.Wait(T6))
+                {
+                    Logger.Error($"T6 Timeout: {T6 / 1000} sec.");
+                    CommunicationStateChanging(ConnectionState.Retry);
+                }
+                _replyExpectedMsgs.TryRemove(e.Id, out _);
+            }
         }
 
         internal Task<SecsMessage> SendDataMessageAsync(SecsMessage secsMessage, int systemByte)
@@ -276,15 +338,55 @@ namespace Secs4Frmk4
                 DeviceId = DeviceId,
                 SystemBytes = systemByte,
             };
+            var bufferList = secsMessage.RawDatas.Value;
+            bufferList[1] = new ArraySegment<byte>(header.EncodeTo(new byte[10]));
+            if (IsActive)
+            {
+                tcpClient.Send(bufferList);
+                SendDataMessageCompleteHandler(tcpClient, token);
+            }
+            else
+            {
+                tcpServer.SyncSendToAll(bufferList);
+                SendDataMessageCompleteHandler(tcpServer, token);
+            }
+            return token.Task;
         }
 
+        private void SendDataMessageCompleteHandler(object sender, TaskCompletionSourceToken token)
+        {
+            if (!_replyExpectedMsgs.ContainsKey(token.Id))
+            {
+                token.SetResult(null);
+                return;
+            }
+            try
+            {
+                if (!token.Task.Wait(T3))
+                {
+                    Logger.Error($"T3 Timeout[id=0x{token.Id:X8}]: {T3 / 1000} sec.");
+                    token.SetException(new SecsException(token.MessageSent, Resources.T3Timeout));
+                }
+            }
+            catch (AggregateException) { }
+            finally
+            {
+                _replyExpectedMsgs.TryRemove(token.Id, out _);
+            }
+        }
         #endregion
 
         #region dispose
         private const int DisposalNotStarted = 0;
         private const int DisposalComplete = 1;
         private int _disposeStage;
+        private readonly StreamDecoder _secsDecoder;
+        private static readonly ArraySegment<byte> ControlMessageLengthBytes = new ArraySegment<byte>(new byte[] { 0, 0, 0, 10 });
+
         public bool IsDisposed => Interlocked.CompareExchange(ref _disposeStage, DisposalComplete, DisposalComplete) == DisposalComplete;
+
+        private static readonly SecsMessage ControlMessage = new SecsMessage(0, 0, String.Empty);
+
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposeStage, DisposalComplete) != DisposalNotStarted)

@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Granda.AATS.Log", "..\Grand
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Wrap", "Wrap", "{CD28F2E1-60C9-4A70-A2B3-7C6BDB0F5722}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestApp", "TestApp\TestApp.csproj", "{AE3EDFA9-398B-466B-A0FB-5AE9503F8D3B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -29,6 +31,10 @@ Global
 		{57E0A100-47FD-43DE-BBDA-7908B0DC5DDF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{57E0A100-47FD-43DE-BBDA-7908B0DC5DDF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{57E0A100-47FD-43DE-BBDA-7908B0DC5DDF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AE3EDFA9-398B-466B-A0FB-5AE9503F8D3B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AE3EDFA9-398B-466B-A0FB-5AE9503F8D3B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AE3EDFA9-398B-466B-A0FB-5AE9503F8D3B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AE3EDFA9-398B-466B-A0FB-5AE9503F8D3B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -2,7 +2,7 @@
 
 namespace Secs4Frmk4
 {
-    internal struct MessageHeader
+    public struct MessageHeader
     {
         public byte S { get; internal set; }
         public byte F { get; internal set; }
@@ -24,7 +24,7 @@ namespace Secs4Frmk4
             // F
             buffer[3] = F;
 
-            // 
+            // PType: 0=> SECS-II Encoding
             buffer[4] = 0;
 
             // MessageType

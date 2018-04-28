@@ -40,6 +40,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ConnectionState.cs" />
+    <Compile Include="ExtensionHelper.cs" />
     <Compile Include="IReadOnlyCollection.cs" />
     <Compile Include="IReadOnlyList.cs" />
     <Compile Include="Item.cs" />

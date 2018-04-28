@@ -6,6 +6,11 @@ namespace Secs4Frmk4
 {
     internal sealed class StreamDecoder
     {
+        public byte[] Buffer
+        {
+            get { return _buffer; }
+            set { _buffer = value; }
+        }
         private byte[] _buffer;
         private int _bufferOffset;
         private int _decodeIndex;
@@ -17,7 +22,9 @@ namespace Secs4Frmk4
         private SecsFormat _format;
         private byte _lengthBits;
         private int _itemLength;
-        private Stack<List<Item>> _stack;
+        private Stack<List<Item>> _stack = new Stack<List<Item>>();
+        private int _previousRemainedCount;
+        private int _decodeStep;
         private readonly byte[] _itemLengthBytes = new byte[4];
 
         /// <summary>
@@ -28,9 +35,9 @@ namespace Secs4Frmk4
         /// <returns></returns>
         public delegate int Decoder(ref int length, out int need);
 
-        public StreamDecoder(int streamBufferSize, Action<MessageHeader> controlMsgHandler, Action<MessageHeader, SecsMessage> dataMsgHandler)
+        public StreamDecoder(Action<MessageHeader> controlMsgHandler, Action<MessageHeader, SecsMessage> dataMsgHandler)
         {
-            _buffer = new byte[streamBufferSize];
+            //_buffer = new byte[streamBufferSize];
             _bufferOffset = 0;
             _decodeIndex = 0;
             _dataMsgHandler = dataMsgHandler;
@@ -47,7 +54,10 @@ namespace Secs4Frmk4
         }
 
         #region Decoders
-        public byte[] Buffer => _buffer;
+
+
+        public int BufferCount => Buffer.Length - _bufferOffset;
+
         // 0: get total message length 4 bytes
         int GetTotalMessageLength(ref int length, out int need)
         {
@@ -182,14 +192,39 @@ namespace Secs4Frmk4
         }
 
 
-        private Item BufferdDecodeItem(byte[] buffer, ref int decodeIndex)
+        private Item BufferdDecodeItem(byte[] bytes, ref int index)
         {
-            throw new NotImplementedException();
+            var format = (SecsFormat)(bytes[index] & 0b1111_1100);
+            var lengthBits = (byte)(bytes[index] & 0b0000_0011);
+            index++;
+
+            var itemLengthBytes = new byte[4];
+            Array.Copy(bytes, index, itemLengthBytes, 0, lengthBits);
+            Array.Reverse(itemLengthBytes, 0, lengthBits);
+
+            int dataLength = BitConverter.ToInt32(itemLengthBytes, 0);
+            index += lengthBits;
+
+            if (format == SecsFormat.List)
+            {
+                if (dataLength == 0)
+                    return Item.L();
+                var list = new List<Item>(dataLength);
+                for (int indey = 0; indey < dataLength; indey++)
+                {
+                    list.Add(BufferdDecodeItem(bytes, ref index));
+                }
+                return Item.L(list);
+            }
+
+            var item = Item.BytesDecode(ref format, bytes, ref index, ref dataLength);
+            index += dataLength;
+            return item;
         }
 
         private bool CheckAvailable(ref int length, int required, out int need)
         {
-            need = required - length;
+            need = required - length;// 超过了收到的字节长度，报错
             if (need > 0)
                 return false;
             need = 0;
@@ -200,7 +235,79 @@ namespace Secs4Frmk4
         internal bool Decode(int length)
         {
             Debug.Assert(length > 0, "decode data length is 0.");
-            return false;
+            var decodeLength = length;
+            length += _previousRemainedCount;// total available length = current length + previous remained
+            int need;
+            var nextStep = _decodeStep;
+            do
+            {
+                _decodeStep = nextStep;
+                nextStep = _decoders[_decodeStep](ref length, out need);
+
+            } while (nextStep != _decodeStep);
+            Debug.Assert(_decodeIndex >= _bufferOffset, "decode index should ahead of buffer index");
+
+            var remainCount = length;
+            Debug.Assert(remainCount >= 0, "remain count is only possible grater and equal zero");
+            Trace.WriteLine($"remain data length: {remainCount}");
+            Trace.WriteLineIf(_messageDataLength > 0, $"need data count: {need}");
+
+            if (remainCount == 0)
+            {
+                if (need > Buffer.Length)
+                {
+                    var newSize = need * 2;
+                    Trace.WriteLine($@"<<buffer resizing>>: current size = {_buffer.Length}, new size = {newSize}");
+
+                    // increase buffer size
+                    _buffer = new byte[newSize];
+                }
+                _bufferOffset = 0;
+                _decodeIndex = 0;
+                _previousRemainedCount = 0;
+            }
+            else
+            {
+                _bufferOffset += decodeLength;
+                var nextStepReqiredCount = remainCount + need;
+                if (nextStepReqiredCount > BufferCount)
+                {
+                    if (nextStepReqiredCount > Buffer.Length)
+                    {
+                        var newSize = Math.Max(_messageDataLength / 2, nextStepReqiredCount) * 2;
+                        Trace.WriteLine($@"<<buffer resizing>>: current size = {_buffer.Length}, remained = {remainCount}, new size = {newSize}");
+
+                        // out of total buffer size
+                        // increase buffer size
+                        var newBuffer = new byte[newSize];
+                        // keep remained data to new buffer's head
+                        Array.Copy(_buffer, _bufferOffset - remainCount, newBuffer, 0, remainCount);
+                        _buffer = newBuffer;
+                    }
+
+                    else
+                    {
+                        Trace.WriteLine($@"<<buffer recyling>>: available = {BufferCount}, need = {nextStepReqiredCount}, remained = {remainCount}");
+
+                        // move remained data to buffer's head
+                        Array.Copy(_buffer, _bufferOffset - remainCount, _buffer, 0, remainCount);
+                    }
+                    _bufferOffset = remainCount;
+                    _decodeIndex = 0;
+                }
+                _previousRemainedCount = remainCount;
+            }
+            return _messageDataLength > 0;
+        }
+
+        public void Reset()
+        {
+            _stack.Clear();
+            _decodeStep = 0;
+            _decodeIndex = 0;
+            _bufferOffset = 0;
+            _messageDataLength = 0;
+            _previousRemainedCount = 0;
         }
     }
 }

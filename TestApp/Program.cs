@@ -10,17 +10,19 @@ namespace TestApp
     {
         static void Main(string[] args)
         {
-            string sml = @"ECR:S1F13 W
-  <L [2] 
-    <A [4] 'MDLN'>
-    <A [7] 'SOFTREV'>
-  >
-.";
-           var message = sml.ToSecsMessage();
+            var bytes = BitConverter.GetBytes(16711679);
+            var byteValue = BitConverter.ToInt32(bytes, 0);
 
-            var smll = message.ToSml();
+            byte[] value = new byte[] { 0xff, 0xff, 0xfe };
+            byte[] value1 = new byte[] { 0xfe, 0xff, 0xff };
+            Byte[] result = new byte[4];
+            byte[] result1 = new byte[4];
+            Array.Copy(value, result, value.Length);
+            Array.Copy(value1, result1, value1.Length);
 
-            message = smll.ToSecsMessage();
+            int INT = BitConverter.ToInt32(result, 0);
+            Array.Reverse(result1);
+            int result2 = BitConverter.ToInt32(result1, 0);
         }
     }
 }

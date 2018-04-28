@@ -16,10 +16,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net;
-using System.Net.Sockets;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AsyncTCP;
@@ -29,8 +26,6 @@ namespace Secs4Frmk4
 {
     public class SecsGem : IDisposable
     {
-
-
         #region event
         /// <summary>
         /// HSMS connection sate changed event
@@ -40,8 +35,8 @@ namespace Secs4Frmk4
         /// <summary>
         /// Primary message received event
         /// </summary>
-        public event EventHandler<TEventArgs<PrimaryMessageWrapper>> PrimaryMessageReceived = DefaultPrimaryMessageReceived;
-        private static void DefaultPrimaryMessageReceived(object sender, TEventArgs<PrimaryMessageWrapper> _) { }
+        public event EventHandler<PrimaryMessageWrapper> PrimaryMessageReceived = DefaultPrimaryMessageReceived;
+        private static void DefaultPrimaryMessageReceived(object sender, PrimaryMessageWrapper _) { }
         #endregion
 
         #region Properties
@@ -57,26 +52,31 @@ namespace Secs4Frmk4
 
         /// <summary>
         /// T3 timer interval 
+        /// <para/>Reply timeout
         /// </summary>
         public int T3 { get; set; } = 40000;
 
         /// <summary>
         /// T5 timer interval
+        /// <para/>Connect Separation timeout
         /// </summary>
-        public int T5 { get; set; } = 10000;
+        public int T5 { get; set; } = 5000;
 
         /// <summary>
         /// T6 timer interval
+        /// <para/>Control Timeout
         /// </summary>
         public int T6 { get; set; } = 5000;
 
         /// <summary>
         /// T7 timer interval
+        /// <para/>Connection Idle Timeout
         /// </summary>
         public int T7 { get; set; } = 10000;
 
         /// <summary>
         /// T8 timer interval
+        /// <para/>network intercharacter timeout
         /// </summary>
         public int T8 { get; set; } = 5000;
 
@@ -100,9 +100,9 @@ namespace Secs4Frmk4
 
 
 
-        private readonly TaskFactory taskFactory = new TaskFactory(TaskScheduler.Default);
+        private readonly TaskFactory _taskFactory = new TaskFactory(TaskScheduler.Default);
 
-        AsyncTcpClient tcpClient;
+        AsyncTcpClient _tcpClient;
         AsyncTcpServer tcpServer;
 
         #endregion
@@ -113,6 +113,7 @@ namespace Secs4Frmk4
             IsActive = isActive;
             IpAddress = ip;
             Port = port;
+            _secsDecoder = new StreamDecoder(HandlerControlMessage, HandleDataMessage);
 
             #region Timer Action
             _timer7 = new Timer(delegate
@@ -139,18 +140,18 @@ namespace Secs4Frmk4
             {
                 if (IsActive)
                 {
-                    tcpClient = new AsyncTcpClient(IpAddress, Port);
-                    tcpClient.ServerConnected += AsyncTcpClient_ServerConnected;
-                    tcpClient.ServerDisconnected += AsyncTcpClient_ServerDisconnected;
-                    tcpClient.ServerExceptionOccurred += TcpClient_ServerExceptionOccurred;
-                    tcpClient.DatagramReceived += DatagramReceived;
-                    tcpClient.RetryInterval = T5;
+                    _tcpClient = new AsyncTcpClient(IpAddress, Port);
+                    _tcpClient.ServerConnected += AsyncTcpClient_ServerConnected;
+                    _tcpClient.ServerDisconnected += AsyncTcpClient_ServerDisconnected;
+                    _tcpClient.ServerExceptionOccurred += TcpClient_ServerExceptionOccurred;
+                    _tcpClient.DatagramReceived += DatagramReceived;
+                    _tcpClient.RetryInterval = T5 / 1000;
                     CommunicationStateChanging(ConnectionState.Connecting);
-                    tcpClient.Connect();
+                    _tcpClient.Connect();
                 }
                 else
                 {
-                    tcpServer = new AsyncTcpServer(IpAddress, Port);
+                    tcpServer = new AsyncTcpServer(Port);
                     tcpServer.ClientConnected += AsyncTcpServer_ClientConnected;
                     tcpServer.ClientDisconnected += AsyncTcpServer_ClientDisconnected;
                     tcpServer.DatagramReceived += DatagramReceived;
@@ -162,20 +163,24 @@ namespace Secs4Frmk4
             {
                 if (IsActive)
                 {
-                    tcpClient.Close();
-                    tcpClient.Dispose();
-                    tcpClient = null;
+                    _tcpClient.Close();
+                    _tcpClient.ServerConnected -= AsyncTcpClient_ServerConnected;
+                    _tcpClient.ServerDisconnected -= AsyncTcpClient_ServerDisconnected;
+                    _tcpClient.ServerExceptionOccurred -= TcpClient_ServerExceptionOccurred;
+                    _tcpClient.DatagramReceived -= DatagramReceived;
                 }
                 else
                 {
                     tcpServer.Stop();
-                    tcpServer.Dispose();
-                    tcpServer = null;
+                    tcpServer.ClientConnected -= AsyncTcpServer_ClientConnected;
+                    tcpServer.ClientDisconnected -= AsyncTcpServer_ClientDisconnected;
+                    tcpServer.DatagramReceived -= DatagramReceived;
                 }
             };
         }
 
         public void Start() => new TaskFactory(TaskScheduler.Default).StartNew(_startImpl);
+        //public void Start() => _startImpl();
 
         public void Stop() => new TaskFactory(TaskScheduler.Default).StartNew(_stopImpl);
 
@@ -185,48 +190,22 @@ namespace Secs4Frmk4
             _timer8.Change(Timeout.Infinite, Timeout.Infinite);
             _timerLinkTest.Change(Timeout.Infinite, Timeout.Infinite);
 
-            _stopImpl?.Invoke();
+            _secsDecoder.Reset();
+            _replyExpectedMsgs.Clear();
+            _stopImpl();
         }
 
-        #endregion
-
-        #region receive
-        private void DatagramReceived(object sender, TcpDatagramReceivedEventArgs<byte[]> e)
-        {
-            try
-            {
-                _timer8.Change(Timeout.Infinite, Timeout.Infinite);
-                var receivedCount = e.ReceivedCount;
-                if (receivedCount == 0)
-                {
-                    Logger.Error("Received 0 byte.");
-                    CommunicationStateChanging(ConnectionState.Retry);
-                    return;
-                }
-
-                if (_secsDecoder.Decode(receivedCount))
-                {
-
-                }
-
-            }
-            catch (Exception)
-            {
-
-                throw;
-            }
-        }
         #endregion
 
         #region connection
         private void AsyncTcpServer_ClientDisconnected(object sender, TcpClientDisConnectedEventArgs e)
         {
-            CommunicationStateChanging(ConnectionState.Retry);
+
         }
 
         private void AsyncTcpClient_ServerDisconnected(object sender, TcpServerDisconnectedEventArgs e)
         {
-            CommunicationStateChanging(ConnectionState.Retry);
+
         }
 
         private void AsyncTcpServer_ClientConnected(object sender, TcpClientConnectedEventArgs e)
@@ -267,7 +246,136 @@ namespace Secs4Frmk4
                     if (IsDisposed)
                         return;
                     Reset();
-                    Task.Factory.StartNew(_startImpl);
+
+                    Start();
+                    break;
+                default:
+                    break;
+            }
+        }
+        #endregion
+
+        #region receive
+        private void DatagramReceived(object sender, TcpDatagramReceivedEventArgs<byte[]> e)
+        {
+            try
+            {
+                _timer8.Change(Timeout.Infinite, Timeout.Infinite);
+                var receivedCount = e.ReceivedCount;
+                if (receivedCount == 0)
+                {
+                    Logger.Error("Received 0 byte.");
+                    CommunicationStateChanging(ConnectionState.Retry);
+                    return;
+                }
+                _secsDecoder.Buffer = e.ReceivedBytes;
+                if (_secsDecoder.Decode(receivedCount))
+                {// 尚未接收完全，开启T8
+#if !DISABLE_T8
+                    Logger.Info($"Start T8 Timer: {T8 / 1000} sec.");
+                    _timer8.Change(T8, Timeout.Infinite);
+#endif
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("Unexpected exception", ex);
+                CommunicationStateChanging(ConnectionState.Retry);
+            }
+        }
+
+        private void HandleDataMessage(MessageHeader header, SecsMessage secsMessage)
+        {
+            var systemByte = header.SystemBytes;
+            if (header.DeviceId != DeviceId && secsMessage.S != 9 && secsMessage.F != 1)
+            {
+                Logger.Error("Received Unrecognized Device Id Message");
+                SendDataMessageAsync(new SecsMessage(
+                    9,
+                    1,
+                    false,
+                    "Unrecognized Device Id",
+                    Item.B(header.EncodeTo(new byte[10]))),// 将header作为消息体返回
+                    NewSystemId);
+                return;
+            }
+
+            if (secsMessage.F % 2 != 0)
+            {
+                if (secsMessage.S != 9)
+                {
+                    _taskFactory.StartNew((wrapper) =>
+                    {
+                        PrimaryMessageReceived?.Invoke(this, wrapper as PrimaryMessageWrapper);
+                    }, new PrimaryMessageWrapper(this, header, secsMessage));
+                    return;
+                }
+                // Error message
+                var headerBytes = secsMessage.SecsItem.GetValues<byte>();// 解析出MessageHeader的Bytes
+                systemByte = BitConverter.ToInt32(new byte[] { headerBytes[9], headerBytes[8], headerBytes[7], headerBytes[6] }, 0);
+            }
+
+            if (_replyExpectedMsgs.TryGetValue(systemByte, out var ar))
+                ar.HandleReplyMessage(secsMessage);
+        }
+
+        private void HandlerControlMessage(MessageHeader header)
+        {
+            var systemByte = header.SystemBytes;
+            if ((byte)header.MessageType % 2 == 0)
+            {// 收到Control message的response信息
+                if (_replyExpectedMsgs.TryGetValue(systemByte, out var ar))
+                {
+                    ar.SetResult(ControlMessage);
+                }
+                else
+                {
+                    Logger.Error("Received Unexpected Control Message: " + header.MessageType);
+                    return;
+                }
+            }
+
+            Logger.Info("Received Control Message: " + header.MessageType);
+            switch (header.MessageType)
+            {
+                case MessageType.DataMessage:
+                    break;
+                case MessageType.SelectRequest:
+                    SendControlMessage(MessageType.SelectResponse, systemByte);
+                    break;
+                case MessageType.SelectResponse:
+                    switch (header.F)
+                    {
+                        case 0:
+                            CommunicationStateChanging(ConnectionState.Selected);
+                            break;
+                        case 1:
+                            Logger.Error("Communication Already Active.");
+                            break;
+                        case 2:
+                            Logger.Error("Connection Not Ready");
+                            break;
+                        case 3:
+                            Logger.Error("Connection Exhaust");
+                            break;
+                        default:
+                            Logger.Error("Connection Status is unknown.");
+                            break;
+                    }
+                    break;
+                case MessageType.Deselect_req:
+                    break;
+                case MessageType.Deselect_rsp:
+                    break;
+                case MessageType.LinkTestRequest:
+                    SendControlMessage(MessageType.LinkTestResponse, systemByte);
+                    break;
+                case MessageType.LinkTestResponse:
+                    break;
+                case MessageType.Reject_req:
+                    break;
+                case MessageType.SeperateRequest:
+                    CommunicationStateChanging(ConnectionState.Retry);
                     break;
                 default:
                     break;
@@ -296,8 +404,8 @@ namespace Secs4Frmk4
 
             if (IsActive)
             {
-                tcpClient.Send(bufferList);
-                SendDataMessageCompleteHandler(tcpClient, token);
+                _tcpClient.Send(bufferList);
+                SendDataMessageCompleteHandler(_tcpClient, token);
             }
             else
             {
@@ -342,8 +450,8 @@ namespace Secs4Frmk4
             bufferList[1] = new ArraySegment<byte>(header.EncodeTo(new byte[10]));
             if (IsActive)
             {
-                tcpClient.Send(bufferList);
-                SendDataMessageCompleteHandler(tcpClient, token);
+                _tcpClient.Send(bufferList);
+                SendDataMessageCompleteHandler(_tcpClient, token);
             }
             else
             {
@@ -374,16 +482,31 @@ namespace Secs4Frmk4
                 _replyExpectedMsgs.TryRemove(token.Id, out _);
             }
         }
+        /// <summary>
+        /// Asynchronously send message to device .
+        /// </summary>
+        /// <param name="secsMessage">primary message</param>
+        /// <returns>senondary</returns>
+        public Task<SecsMessage> SendAsync(SecsMessage secsMessage) => SendAsync(secsMessage, NewSystemId);
+        /// <summary>
+        /// Asynchronously send message to device .
+        /// </summary>
+        /// <param name="secsMessage"></param>
+        /// <param name="systemId"></param>
+        /// <returns>null</returns>
+        public Task<SecsMessage> SendAsync(SecsMessage secsMessage, int systemId) => SendDataMessageAsync(secsMessage, systemId);
         #endregion
 
         #region dispose
         private const int DisposalNotStarted = 0;
         private const int DisposalComplete = 1;
         private int _disposeStage;
-        private readonly StreamDecoder _secsDecoder;
+        private StreamDecoder _secsDecoder;
         private static readonly ArraySegment<byte> ControlMessageLengthBytes = new ArraySegment<byte>(new byte[] { 0, 0, 0, 10 });
 
         public bool IsDisposed => Interlocked.CompareExchange(ref _disposeStage, DisposalComplete, DisposalComplete) == DisposalComplete;
+
+        public int DecoderBufferSize { get; private set; }
 
         private static readonly SecsMessage ControlMessage = new SecsMessage(0, 0, String.Empty);
 

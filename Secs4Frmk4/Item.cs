@@ -82,6 +82,32 @@ namespace Secs4Frmk4
             });
         }
         /// <summary>
+        /// U1, U2, U4, U8
+        /// I1, I2, I4, I8
+        /// F4, F8
+        /// Boolean,
+        /// Binary
+        /// </summary>
+        /// <param name="secsFormat"></param>
+        /// <param name="value"></param>
+        private Item(SecsFormat secsFormat, Array value)
+        {
+            Format = secsFormat;
+            _values = value;
+
+            _rawData = new Lazy<byte[]>(() =>
+            {
+                var arr = (Array)_values;
+                var byteLength = Buffer.ByteLength(arr);
+                var ret = EncodeItem(byteLength);
+                var result = ret.Item1;
+                var headerLength = ret.Item2;
+                Buffer.BlockCopy(arr, 0, result, headerLength, byteLength);
+                result.Reverse(headerLength, headerLength + byteLength, byteLength / arr.Length);
+                return result;
+            });
+        }
+        /// <summary>
         /// Empty Item(none List)
         /// </summary>
         /// <param name="secsFormat"></param>
@@ -115,14 +141,19 @@ namespace Secs4Frmk4
         public static Item L(params Item[] items) => L((IList<Item>)items);
 
         public static Item A(string value) => value != string.Empty ? new Item(SecsFormat.ASCII, value) : A();
+
+        public static Item B(params byte[] value) => value.Length > 0 ? new Item(SecsFormat.Binary, value) : B();
+        public static Item B(IEnumerable<byte> value) => B(value.ToArray());
         #endregion
 
         #region Share Object
         public static Item L() => EmptyL;
         public static Item A() => EmptyA;
+        public static Item B() => EmptyB;
         private static readonly Item EmptyL = new Item(SecsFormat.List, Enumerable.Empty<Item>());
         private static readonly Item EmptyA = new Item(SecsFormat.ASCII, string.Empty);
         private static readonly Item EmptyJ = new Item(SecsFormat.JIS8, string.Empty);
+        private static readonly Item EmptyB = new Item(SecsFormat.Binary, Enumerable.Empty<byte>());
         #endregion
 
         #region internal/private methods
@@ -147,7 +178,7 @@ namespace Secs4Frmk4
             return length;
         }
         /// <summary>
-        /// 
+        /// Item的编码规则为Format|content长度所占byte数 + content长度bytes(最多3byte) + content编码
         /// </summary>
         /// <param name="valueCount"></param>
         /// <returns></returns>
@@ -191,6 +222,19 @@ namespace Secs4Frmk4
                 default:
                     throw new ArgumentException(@"Invalid format", nameof(secsFormat));
             }
+        }
+
+        internal T[] GetValues<T>() where T : struct
+        {
+            if (Format == SecsFormat.List)
+                throw new InvalidOperationException("The item is list.");
+            if (Format == SecsFormat.ASCII || Format == SecsFormat.JIS8)
+                throw new InvalidOperationException("The item is a string");
+
+            if (_values is T[] arr)
+                return arr;
+
+            throw new InvalidOperationException("The type is incompatible");
         }
         #endregion
 

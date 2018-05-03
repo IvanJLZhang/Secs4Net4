@@ -14,22 +14,22 @@
 //----------------------------------------------------------------------------*/
 #endregion
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+using System.Diagnostics;
 using Granda.AATS.Log;
 
-namespace Secs4Frmk4
+namespace Granda.HSMS
 {
     internal abstract class Logger
     {
         public static void Info(string message)
         {
-            LogAdapter.WriteLog(new LogRecord(LogLevel.INFO, message, null));
+            //LogAdapter.WriteLog(new LogRecord(LogLevel.INFO, message, null));
+            Trace.WriteLine(message);
         }
         public static void Error(string message, Exception exception = null)
         {
             LogAdapter.WriteLog(new LogRecord(LogLevel.ERROR, message, exception));
+            Trace.WriteLine(message + ": " + exception?.Message);
         }
     }
 }

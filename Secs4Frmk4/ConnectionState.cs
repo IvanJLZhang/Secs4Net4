@@ -1,4 +1,4 @@
-﻿namespace Secs4Frmk4
+﻿namespace Granda.HSMS
 {
     public enum ConnectionState
     {

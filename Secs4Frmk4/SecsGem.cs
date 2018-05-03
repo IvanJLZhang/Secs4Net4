@@ -16,13 +16,14 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using AsyncTCP;
-using Secs4Frmk4.Properties;
+using Granda.HSMS.Properties;
 
-namespace Secs4Frmk4
+namespace Granda.HSMS
 {
     public class SecsGem : IDisposable
     {
@@ -98,12 +99,7 @@ namespace Secs4Frmk4
         private readonly SystemByteGenerator _systemByte = new SystemByteGenerator();
         internal int NewSystemId => _systemByte.New();
 
-
-
         private readonly TaskFactory _taskFactory = new TaskFactory(TaskScheduler.Default);
-
-        AsyncTcpClient _tcpClient;
-        AsyncTcpServer tcpServer;
 
         #endregion
 
@@ -113,8 +109,8 @@ namespace Secs4Frmk4
             IsActive = isActive;
             IpAddress = ip;
             Port = port;
-            _secsDecoder = new StreamDecoder(HandlerControlMessage, HandleDataMessage);
-
+            _secsDecoder = new StreamDecoder(0x4000, HandlerControlMessage, HandleDataMessage);
+            DecoderBufferSize = 0x4000;
             #region Timer Action
             _timer7 = new Timer(delegate
             {
@@ -136,51 +132,93 @@ namespace Secs4Frmk4
 
             #endregion
 
-            _startImpl = () =>
+            if (IsActive)
             {
-                if (IsActive)
+                _startImpl = () =>
                 {
-                    _tcpClient = new AsyncTcpClient(IpAddress, Port);
-                    _tcpClient.ServerConnected += AsyncTcpClient_ServerConnected;
-                    _tcpClient.ServerDisconnected += AsyncTcpClient_ServerDisconnected;
-                    _tcpClient.ServerExceptionOccurred += TcpClient_ServerExceptionOccurred;
-                    _tcpClient.DatagramReceived += DatagramReceived;
-                    _tcpClient.RetryInterval = T5 / 1000;
+                    if (IsDisposed)
+                        return;
                     CommunicationStateChanging(ConnectionState.Connecting);
-                    _tcpClient.Connect();
-                }
-                else
-                {
-                    tcpServer = new AsyncTcpServer(Port);
-                    tcpServer.ClientConnected += AsyncTcpServer_ClientConnected;
-                    tcpServer.ClientDisconnected += AsyncTcpServer_ClientDisconnected;
-                    tcpServer.DatagramReceived += DatagramReceived;
-                    CommunicationStateChanging(ConnectionState.Connecting);
-                    tcpServer.Start();
-                }
-            };
-            _stopImpl = () =>
+                    try
+                    {
+                        _socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                        SocketAsyncEventArgs socketAsyncEventArgs = new SocketAsyncEventArgs();
+                        socketAsyncEventArgs.RemoteEndPoint = new IPEndPoint(ip, port);
+                        socketAsyncEventArgs.Completed += ((sender, e) =>
+                    {
+                        if (e.SocketError == SocketError.Success)
+                        {
+                            // hook receive envent first, because no message will received before 'SelectRequest' send to device
+                            StartSocketReceive();
+                            SendControlMessage(MessageType.SelectRequest, NewSystemId);
+                        }
+                        else
+                        {
+                            Logger.Info($"Start T5 Timer: {T5 / 1000} sec.");
+                            Thread.Sleep(T5);
+                            CommunicationStateChanging(ConnectionState.Retry);
+                        }
+                    });
+                        _socket.ConnectAsync(socketAsyncEventArgs);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (IsDisposed)
+                            return;
+                        Logger.Error("", ex);
+                        Logger.Info($"Start T5 Timer: {T5 / 1000} sec.");
+                        Thread.Sleep(T5);
+                    }
+
+                };
+            }
+            else
             {
-                if (IsActive)
+                var server = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                server.Bind(new IPEndPoint(IpAddress, port));
+                server.Listen(0);
+
+                _startImpl = () =>
                 {
-                    _tcpClient.Close();
-                    _tcpClient.ServerConnected -= AsyncTcpClient_ServerConnected;
-                    _tcpClient.ServerDisconnected -= AsyncTcpClient_ServerDisconnected;
-                    _tcpClient.ServerExceptionOccurred -= TcpClient_ServerExceptionOccurred;
-                    _tcpClient.DatagramReceived -= DatagramReceived;
-                }
-                else
+                    if (IsDisposed) return;
+                    CommunicationStateChanging(ConnectionState.Connecting);
+                    try
+                    {
+                        var socketAsyncEventArgs = new SocketAsyncEventArgs();
+                        socketAsyncEventArgs.Completed += (sender, e) =>
+                        {
+                            if (e.SocketError == SocketError.Success)
+                            {
+                                _socket = e.AcceptSocket;
+                                StartSocketReceive();
+                            }
+                            else
+                            {
+                                Logger.Info($"Start T5 Timer: {T5 / 1000} sec.");
+                                Thread.Sleep(T5);
+                                CommunicationStateChanging(ConnectionState.Retry);
+                            }
+                        };
+                        server.AcceptAsync(socketAsyncEventArgs);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (IsDisposed)
+                            return;
+                        Logger.Error("", ex);
+                    }
+                };
+                _stopImpl = () =>
                 {
-                    tcpServer.Stop();
-                    tcpServer.ClientConnected -= AsyncTcpServer_ClientConnected;
-                    tcpServer.ClientDisconnected -= AsyncTcpServer_ClientDisconnected;
-                    tcpServer.DatagramReceived -= DatagramReceived;
-                }
-            };
+                    if (IsDisposed)
+                        server.Dispose();
+                };
+            }
         }
 
+
+
         public void Start() => new TaskFactory(TaskScheduler.Default).StartNew(_startImpl);
-        //public void Start() => _startImpl();
 
         public void Stop() => new TaskFactory(TaskScheduler.Default).StartNew(_stopImpl);
 
@@ -192,37 +230,19 @@ namespace Secs4Frmk4
 
             _secsDecoder.Reset();
             _replyExpectedMsgs.Clear();
-            _stopImpl();
+            _stopImpl?.Invoke();
+
+            if (_socket is null)
+                return;
+            if (_socket.Connected)
+                _socket.Shutdown(SocketShutdown.Both);
+            _socket.Dispose();
+            _socket = null;
         }
 
         #endregion
 
         #region connection
-        private void AsyncTcpServer_ClientDisconnected(object sender, TcpClientDisConnectedEventArgs e)
-        {
-
-        }
-
-        private void AsyncTcpClient_ServerDisconnected(object sender, TcpServerDisconnectedEventArgs e)
-        {
-
-        }
-
-        private void AsyncTcpServer_ClientConnected(object sender, TcpClientConnectedEventArgs e)
-        {
-            CommunicationStateChanging(ConnectionState.Connected);
-        }
-
-        private void AsyncTcpClient_ServerConnected(object sender, TcpServerConnectedEventArgs e)
-        {
-            CommunicationStateChanging(ConnectionState.Connected);
-            SendControlMessage(MessageType.SelectRequest, NewSystemId);
-        }
-        private void TcpClient_ServerExceptionOccurred(object sender, TcpServerExceptionOccurredEventArgs e)
-        {
-            CommunicationStateChanging(ConnectionState.Retry);
-        }
-
         private void CommunicationStateChanging(ConnectionState state)
         {
             State = state;
@@ -246,8 +266,7 @@ namespace Secs4Frmk4
                     if (IsDisposed)
                         return;
                     Reset();
-
-                    Start();
+                    Task.Factory.StartNew(_startImpl);
                     break;
                 default:
                     break;
@@ -256,26 +275,61 @@ namespace Secs4Frmk4
         #endregion
 
         #region receive
-        private void DatagramReceived(object sender, TcpDatagramReceivedEventArgs<byte[]> e)
+        private void StartSocketReceive()
         {
+            CommunicationStateChanging(ConnectionState.Connected);
+            var receiveCompleteEventArgs = new SocketAsyncEventArgs();
+            receiveCompleteEventArgs.SetBuffer(_secsDecoder.Buffer, _secsDecoder.BufferOffset, _secsDecoder.BufferCount);
+            receiveCompleteEventArgs.Completed += ReceiveCompleteEventArgs_Completed;
+            if (!_socket.ReceiveAsync(receiveCompleteEventArgs))
+                ReceiveCompleteEventArgs_Completed(_socket, receiveCompleteEventArgs);
+        }
+
+        private void ReceiveCompleteEventArgs_Completed(object sender, SocketAsyncEventArgs e)
+        {
+            if (e.SocketError != SocketError.Success)
+            {
+                var ex = new SocketException((int)e.SocketError);
+                Logger.Error($"RecieveComplete socket error:{ex.Message}, ErrorCode:{ex.SocketErrorCode}", ex);
+                CommunicationStateChanging(ConnectionState.Retry);
+                return;
+            }
+
             try
             {
                 _timer8.Change(Timeout.Infinite, Timeout.Infinite);
-                var receivedCount = e.ReceivedCount;
-                if (receivedCount == 0)
+                var receiveCount = e.BytesTransferred;
+                if (receiveCount == 0)
                 {
-                    Logger.Error("Received 0 byte.");
+                    Logger.Error("receive 0 byte.");
                     CommunicationStateChanging(ConnectionState.Retry);
                     return;
                 }
-                _secsDecoder.Buffer = e.ReceivedBytes;
-                if (_secsDecoder.Decode(receivedCount))
-                {// 尚未接收完全，开启T8
+
+                if (_secsDecoder.Decode(receiveCount))
+                {
 #if !DISABLE_T8
-                    Logger.Info($"Start T8 Timer: {T8 / 1000} sec.");
+                    Trace.WriteLine($"Start T8 Timer: {T8 / 1000} sec.");
                     _timer8.Change(T8, Timeout.Infinite);
 #endif
                 }
+
+                if (_secsDecoder.Buffer.Length != DecoderBufferSize)
+                {
+                    // buffer size changed
+                    e.SetBuffer(_secsDecoder.Buffer, _secsDecoder.BufferOffset, _secsDecoder.BufferCount);
+                    DecoderBufferSize = _secsDecoder.Buffer.Length;
+                }
+                else
+                {
+                    e.SetBuffer(_secsDecoder.BufferOffset, _secsDecoder.BufferCount);
+                }
+
+                if (_socket is null || IsDisposed)
+                    return;
+
+                if (!_socket.ReceiveAsync(e))
+                    ReceiveCompleteEventArgs_Completed(sender, e);
             }
             catch (Exception ex)
             {
@@ -290,13 +344,16 @@ namespace Secs4Frmk4
             if (header.DeviceId != DeviceId && secsMessage.S != 9 && secsMessage.F != 1)
             {
                 Logger.Error("Received Unrecognized Device Id Message");
-                SendDataMessageAsync(new SecsMessage(
+                SecsMessage replyWrongDeviceIdMsg = new SecsMessage(
                     9,
                     1,
                     false,
-                    "Unrecognized Device Id",
-                    Item.B(header.EncodeTo(new byte[10]))),// 将header作为消息体返回
-                    NewSystemId);
+                    Resources.S9F1,
+                    Item.B(header.EncodeTo(new byte[10])));// 将header作为消息体返回
+                SendDataMessageAsync(replyWrongDeviceIdMsg, NewSystemId);
+
+                if (_replyExpectedMsgs.TryGetValue(systemByte, out var ar1))
+                    ar1.HandleReplyMessage(replyWrongDeviceIdMsg);
                 return;
             }
 
@@ -342,6 +399,7 @@ namespace Secs4Frmk4
                     break;
                 case MessageType.SelectRequest:
                     SendControlMessage(MessageType.SelectResponse, systemByte);
+                    CommunicationStateChanging(ConnectionState.Selected);
                     break;
                 case MessageType.SelectResponse:
                     switch (header.F)
@@ -392,39 +450,44 @@ namespace Secs4Frmk4
                 _replyExpectedMsgs[systemByte] = token;
             }
 
-            var bufferList = new List<ArraySegment<byte>>(2)
+            var sendEventArgs = new SocketAsyncEventArgs
             {
-                ControlMessageLengthBytes,
-                new ArraySegment<byte>(new MessageHeader{
-                    DeviceId = 0xFFFF,
-                    MessageType = messageType,
-                    SystemBytes = systemByte
-                }.EncodeTo(new byte[10]))
+                BufferList = new List<ArraySegment<byte>>(2)
+                {
+                    ControlMessageLengthBytes,
+                    new ArraySegment<byte>(new MessageHeader
+                    {
+                        DeviceId = 0xffff,
+                        MessageType = messageType,
+                        SystemBytes = systemByte
+                    }.EncodeTo(new byte[10]))
+                },
+                UserToken = token,
             };
 
-            if (IsActive)
-            {
-                _tcpClient.Send(bufferList);
-                SendDataMessageCompleteHandler(_tcpClient, token);
-            }
-            else
-            {
-                tcpServer.SyncSendToAll(bufferList);
-                SendDataMessageCompleteHandler(tcpServer, token);
-            }
+            sendEventArgs.Completed += SendControlMessage_Completed;
+            if (!_socket.SendAsync(sendEventArgs))
+                SendControlMessage_Completed(_socket, sendEventArgs);
         }
 
-        private void SendControlMessageHandler(object sender, TaskCompletionSourceToken e)
+        private void SendControlMessage_Completed(object sender, SocketAsyncEventArgs e)
         {
-            Logger.Info("Sent Control Message: " + e.MsgType);
-            if (_replyExpectedMsgs.ContainsKey(e.Id))
+            var completeToken = e.UserToken as TaskCompletionSourceToken;
+            if (e.SocketError != SocketError.Success)
             {
-                if (!e.Task.Wait(T6))
+                completeToken.SetException(new SocketException((int)e.SocketError));
+                return;
+            }
+
+            Logger.Info("Sent Control message: " + completeToken.MsgType);
+            if (_replyExpectedMsgs.ContainsKey(completeToken.Id))
+            {
+                if (!completeToken.Task.Wait(T6))
                 {
                     Logger.Error($"T6 Timeout: {T6 / 1000} sec.");
                     CommunicationStateChanging(ConnectionState.Retry);
                 }
-                _replyExpectedMsgs.TryRemove(e.Id, out _);
+                _replyExpectedMsgs.TryRemove(completeToken.Id, out TaskCompletionSourceToken _);
             }
         }
 
@@ -448,38 +511,48 @@ namespace Secs4Frmk4
             };
             var bufferList = secsMessage.RawDatas.Value;
             bufferList[1] = new ArraySegment<byte>(header.EncodeTo(new byte[10]));
-            if (IsActive)
+            var sendEventArgs = new SocketAsyncEventArgs
             {
-                _tcpClient.Send(bufferList);
-                SendDataMessageCompleteHandler(_tcpClient, token);
-            }
-            else
-            {
-                tcpServer.SyncSendToAll(bufferList);
-                SendDataMessageCompleteHandler(tcpServer, token);
-            }
+                BufferList = bufferList,
+                UserToken = token,
+            };
+            sendEventArgs.Completed += SendDataMessage_Completed;
+            if (!_socket.SendAsync(sendEventArgs))
+                SendDataMessage_Completed(_socket, sendEventArgs);
             return token.Task;
         }
 
-        private void SendDataMessageCompleteHandler(object sender, TaskCompletionSourceToken token)
+        private void SendDataMessage_Completed(object sender, SocketAsyncEventArgs e)
         {
-            if (!_replyExpectedMsgs.ContainsKey(token.Id))
+            var completeToken = e.UserToken as TaskCompletionSourceToken;
+            if (e.SocketError != SocketError.Success)
             {
-                token.SetResult(null);
+                completeToken.SetException(new SocketException((int)e.SocketError));
+                CommunicationStateChanging(ConnectionState.Retry);
                 return;
             }
+
+            Trace.WriteLine("Send Data Message: " + completeToken.MessageSent.ToString());
+            if (!_replyExpectedMsgs.ContainsKey(completeToken.Id))
+            {
+                completeToken.SetResult(null);
+                return;
+            }
+
             try
             {
-                if (!token.Task.Wait(T3))
+                if (!completeToken.Task.Wait(T3))
                 {
-                    Logger.Error($"T3 Timeout[id=0x{token.Id:X8}]: {T3 / 1000} sec.");
-                    token.SetException(new SecsException(token.MessageSent, Resources.T3Timeout));
+                    Logger.Error($"T3 Timeout[id=0x{completeToken.Id:X8}]: {T3 / 1000} sec.");
+                    completeToken.SetException(new SecsException(completeToken.MessageSent, Resources.T3Timeout));
                 }
             }
-            catch (AggregateException) { }
+            catch (Exception)
+            {
+            }
             finally
             {
-                _replyExpectedMsgs.TryRemove(token.Id, out _);
+                _replyExpectedMsgs.TryRemove(completeToken.Id, out TaskCompletionSourceToken _);
             }
         }
         /// <summary>
@@ -502,6 +575,7 @@ namespace Secs4Frmk4
         private const int DisposalComplete = 1;
         private int _disposeStage;
         private StreamDecoder _secsDecoder;
+        private Socket _socket;
         private static readonly ArraySegment<byte> ControlMessageLengthBytes = new ArraySegment<byte>(new byte[] { 0, 0, 0, 10 });
 
         public bool IsDisposed => Interlocked.CompareExchange(ref _disposeStage, DisposalComplete, DisposalComplete) == DisposalComplete;

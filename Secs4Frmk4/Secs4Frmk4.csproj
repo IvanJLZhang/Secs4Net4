@@ -7,8 +7,8 @@
     <ProjectGuid>{7E51F1AE-3104-4858-AF49-6A81AABE7BCB}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>Secs4Frmk4</RootNamespace>
-    <AssemblyName>Secs4Frmk4</AssemblyName>
+    <RootNamespace>Granda.HSMS</RootNamespace>
+    <AssemblyName>Granda.HSMS</AssemblyName>
     <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
   </PropertyGroup>
@@ -32,6 +32,7 @@
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Net" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
     <Reference Include="Microsoft.CSharp" />
@@ -41,8 +42,6 @@
   <ItemGroup>
     <Compile Include="ConnectionState.cs" />
     <Compile Include="ExtensionHelper.cs" />
-    <Compile Include="IReadOnlyCollection.cs" />
-    <Compile Include="IReadOnlyList.cs" />
     <Compile Include="Item.cs" />
     <Compile Include="Logger.cs" />
     <Compile Include="MessageHeader.cs" />
@@ -54,7 +53,6 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
-    <Compile Include="ReadOnlyCollection.cs" />
     <Compile Include="SecsException.cs" />
     <Compile Include="SecsFormat.cs" />
     <Compile Include="SecsGem.cs" />
@@ -66,10 +64,6 @@
     <Compile Include="TEventArgs.cs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\AsyncSocketSolution\AsyncTCP\AsyncTCP.csproj">
-      <Project>{541c8d3e-3eb6-4bc7-87c0-633173fc0cbd}</Project>
-      <Name>AsyncTCP</Name>
-    </ProjectReference>
     <ProjectReference Include="..\..\Granda.AATS.Log\Granda.AATS.Log.csproj">
       <Project>{57e0a100-47fd-43de-bbda-7908b0dc5ddf}</Project>
       <Name>Granda.AATS.Log</Name>
@@ -80,6 +74,9 @@
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
     </EmbeddedResource>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="app.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

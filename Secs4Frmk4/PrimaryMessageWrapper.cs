@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace Secs4Frmk4
+namespace Granda.HSMS
 {
     public class PrimaryMessageWrapper : EventArgs
     {
@@ -8,6 +8,9 @@ namespace Secs4Frmk4
         private MessageHeader header;
         public SecsMessage Message { get; }
         public int MessageId => header.SystemBytes;
+
+        public MessageHeader Header { get => header; set => header = value; }
+
         public PrimaryMessageWrapper(SecsGem secsGem, MessageHeader header, SecsMessage secsMessage)
         {
             this.secsGem = secsGem;

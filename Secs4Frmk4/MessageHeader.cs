@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace Secs4Frmk4
+namespace Granda.HSMS
 {
     public struct MessageHeader
     {
@@ -11,7 +11,7 @@ namespace Secs4Frmk4
         public int SystemBytes { get; internal set; }
         public MessageType MessageType { get; internal set; }
 
-        internal byte[] EncodeTo(byte[] buffer)
+        public byte[] EncodeTo(byte[] buffer)
         {
             // Device Id
             var values = BitConverter.GetBytes(DeviceId);

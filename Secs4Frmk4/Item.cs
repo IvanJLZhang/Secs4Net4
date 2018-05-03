@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-namespace Secs4Frmk4
+namespace Granda.HSMS
 {
     public sealed class Item
     {
@@ -34,9 +34,12 @@ namespace Secs4Frmk4
         {
             get
             {
-                return Format == SecsFormat.List
-                    ? ((IList<Item>)_values).Count
-                    : ((string)_values).Length;
+                if (Format == SecsFormat.List)
+                    return ((IList<Item>)_values).Count;
+                else if (Format == SecsFormat.ASCII)
+                    return _values.ToString().Length;
+                else
+                    return ((Array)_values).Length;
             }
         }
         public IList<byte> RawBytes => _rawData.Value;
@@ -219,9 +222,19 @@ namespace Secs4Frmk4
             {
                 case SecsFormat.ASCII:
                     return length == 0 ? A() : A(Encoding.ASCII.GetString(data, index, length));
+                case SecsFormat.Binary:
+                    return length == 0 ? B() : B(Decode<byte>(data, ref index, ref length, sizeof(byte)));
                 default:
                     throw new ArgumentException(@"Invalid format", nameof(secsFormat));
             }
+        }
+
+        private static T[] Decode<T>(byte[] data, ref int index, ref int length, int elmSize)
+        {
+            data.Reverse(index, index + length, elmSize);
+            var values = new T[length / elmSize];
+            Buffer.BlockCopy(data, index, values, 0, length);
+            return values;
         }
 
         internal T[] GetValues<T>() where T : struct

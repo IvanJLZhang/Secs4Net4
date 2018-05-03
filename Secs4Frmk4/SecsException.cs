@@ -1,9 +1,9 @@
 ﻿using System;
 using System.Runtime.Serialization;
 
-namespace Secs4Frmk4
+namespace Granda.HSMS
 {
-    internal class SecsException : Exception
+    public class SecsException : Exception
     {
         public SecsMessage secsMessage { get; }
 

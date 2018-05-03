@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using Secs4Frmk4.Properties;
+using Granda.HSMS.Properties;
 
-namespace Secs4Frmk4
+namespace Granda.HSMS
 {
     public sealed class SecsMessage
     {

@@ -1,7 +1,7 @@
 ﻿using System.Threading.Tasks;
-using Secs4Frmk4.Properties;
+using Granda.HSMS.Properties;
 
-namespace Secs4Frmk4
+namespace Granda.HSMS
 {
     internal class TaskCompletionSourceToken : TaskCompletionSource<SecsMessage>
     {

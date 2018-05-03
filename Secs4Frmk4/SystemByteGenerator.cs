@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Threading;
 
-namespace Secs4Frmk4
+namespace Granda.HSMS
 {
     internal sealed class SystemByteGenerator
     {

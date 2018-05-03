@@ -2,17 +2,18 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 
-namespace Secs4Frmk4
+namespace Granda.HSMS
 {
     internal sealed class StreamDecoder
     {
-        public byte[] Buffer
-        {
-            get { return _buffer; }
-            set { _buffer = value; }
-        }
+        public byte[] Buffer => _buffer;
+
+        public int BufferCount => Buffer.Length - _bufferOffset;
+
+        public int BufferOffset => _bufferOffset;
         private byte[] _buffer;
         private int _bufferOffset;
+
         private int _decodeIndex;
         private Action<MessageHeader, SecsMessage> _dataMsgHandler;
         private Action<MessageHeader> _controlMsgHandler;
@@ -35,9 +36,9 @@ namespace Secs4Frmk4
         /// <returns></returns>
         public delegate int Decoder(ref int length, out int need);
 
-        public StreamDecoder(Action<MessageHeader> controlMsgHandler, Action<MessageHeader, SecsMessage> dataMsgHandler)
+        internal StreamDecoder(int streamBufferSize, Action<MessageHeader> controlMsgHandler, Action<MessageHeader, SecsMessage> dataMsgHandler)
         {
-            //_buffer = new byte[streamBufferSize];
+            _buffer = new byte[streamBufferSize];
             _bufferOffset = 0;
             _decodeIndex = 0;
             _dataMsgHandler = dataMsgHandler;
@@ -54,10 +55,6 @@ namespace Secs4Frmk4
         }
 
         #region Decoders
-
-
-        public int BufferCount => Buffer.Length - _bufferOffset;
-
         // 0: get total message length 4 bytes
         int GetTotalMessageLength(ref int length, out int need)
         {
@@ -65,14 +62,15 @@ namespace Secs4Frmk4
                 return 0;
             Array.Reverse(_buffer, _decodeIndex, 4);
             _messageDataLength = BitConverter.ToUInt32(_buffer, _decodeIndex);
-            Trace.WriteLine($"Get Message Length: {_messageDataLength}");
+            //Trace.WriteLine($"Get Message Length: {_messageDataLength}");
             _decodeIndex += 4;
+            length -= 4;
             return GetMessageHeader(ref length, out need);
         }
         // 1: get message header 10 bytes
         private int GetMessageHeader(ref int length, out int need)
         {
-            if (CheckAvailable(ref length, 10, out need))
+            if (!CheckAvailable(ref length, 10, out need))
                 return 1;
             _messageHeader = MessageHeader.Decode(_buffer, _decodeIndex);
             _decodeIndex += 10;
@@ -106,7 +104,7 @@ namespace Secs4Frmk4
         // 2: get _format + lengtnBits(2bit) 1 byte
         private int GetItemHeader(ref int length, out int need)
         {
-            if (CheckAvailable(ref length, 1, out need))
+            if (!CheckAvailable(ref length, 1, out need))
                 return 2;
             _format = (SecsFormat)(_buffer[_decodeIndex] & 0b1111_1100);
             _lengthBits = (byte)(_buffer[_decodeIndex] & 0b0000_0011);
@@ -118,10 +116,10 @@ namespace Secs4Frmk4
         // 3: get _itemLength _lengthBits bytes, at most 3 byte
         private int GetItemLength(ref int length, out int need)
         {
-            if (CheckAvailable(ref length, 1, out need))
+            if (!CheckAvailable(ref length, _lengthBits, out need))
                 return 3;
             Array.Copy(_buffer, _decodeIndex, _itemLengthBytes, 0, _lengthBits);
-            Array.Reverse(_itemLengthBytes, 0, 4);
+            Array.Reverse(_itemLengthBytes, 0, _lengthBits);
 
             _itemLength = BitConverter.ToInt32(_itemLengthBytes, 0);
             Array.Clear(_itemLengthBytes, 0, 4);
@@ -153,6 +151,7 @@ namespace Secs4Frmk4
             {
                 if (!CheckAvailable(ref length, _itemLength, out need))
                     return 4;
+
                 item = Item.BytesDecode(ref _format, _buffer, ref _decodeIndex, ref _itemLength);
                 Trace.WriteLine($"Complete Item: {_format}");
 
@@ -235,6 +234,17 @@ namespace Secs4Frmk4
         internal bool Decode(int length)
         {
             Debug.Assert(length > 0, "decode data length is 0.");
+
+            string byteStr = String.Empty;
+            for (int index = 0; index < length; index++)
+            {
+                byteStr += $"{_buffer[index]:X2} ";
+                if ((index + 1) % 10 == 0)
+                    byteStr += " ";
+                if ((index + 1) % 20 == 0)
+                    byteStr += "\r\n";
+            }
+            Logger.Info(byteStr);
             var decodeLength = length;
             length += _previousRemainedCount;// total available length = current length + previous remained
             int need;
@@ -249,7 +259,7 @@ namespace Secs4Frmk4
 
             var remainCount = length;
             Debug.Assert(remainCount >= 0, "remain count is only possible grater and equal zero");
-            Trace.WriteLine($"remain data length: {remainCount}");
+            //Trace.WriteLine($"remain data length: {remainCount}");
             Trace.WriteLineIf(_messageDataLength > 0, $"need data count: {need}");
 
             if (remainCount == 0)

@@ -16,8 +16,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using static Secs4Frmk4.Item;
-namespace Secs4Frmk4.Sml
+using static Granda.HSMS.Item;
+namespace Granda.HSMS.Sml
 {
     public static class SmlExtension
     {
@@ -62,12 +62,30 @@ namespace Secs4Frmk4.Sml
                 case SecsFormat.ASCII:
                     textWriter.Write($"\'{secsItem.GetString()}\'");// 'content'
                     break;
+                case SecsFormat.Binary:
+                    textWriter.Write(secsItem.GetValues<byte>().ToHexString());
+                    break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(secsItem.Format), secsItem.Format, "invalid SecsFormat value");
             }
             textWriter.WriteLine('>');
         }
+        public static string ToHexString(this byte[] value)
+        {
+            if (value.Length == 0) return string.Empty;
+            int length = value.Length * 3;
+            char[] chs = new char[length];
+            for (int ci = 0, i = 0; ci < length; ci += 3)
+            {
+                byte num = value[i++];
+                chs[ci] = GetHexValue(num / 0x10);
+                chs[ci + 1] = GetHexValue(num % 0x10);
+                chs[ci + 2] = ' ';
+            }
+            return new string(chs, 0, length - 1);
 
+            char GetHexValue(int i) => (i < 10) ? (char)(i + 0x30) : (char)((i - 10) + 0x41);
+        }
         public static string ToSml(this SecsFormat secsFormat)
         {
             switch (secsFormat)
@@ -77,7 +95,8 @@ namespace Secs4Frmk4.Sml
 
                 case SecsFormat.ASCII:
                     return "A";
-
+                case SecsFormat.Binary:
+                    return "B";
                 default:
                     throw new ArgumentOutOfRangeException(nameof(secsFormat), (int)secsFormat, "Invalid enum value");
             }

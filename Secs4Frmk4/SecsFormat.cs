@@ -1,4 +1,4 @@
-﻿namespace Secs4Frmk4
+﻿namespace Granda.HSMS
 {
     /// <summary>
     /// The enumeration of SECS item value format
